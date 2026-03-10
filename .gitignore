@@ -1,0 +1,11 @@
+.vscode
+
+DS_Store
+**/__pycache__/
+
+checkpoints/
+logs/
+wandb/
+
+batch_training.sh
+slurm_*.out
