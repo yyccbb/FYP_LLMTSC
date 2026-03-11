@@ -32,26 +32,25 @@ def prepare_paths(city_dir_name, run_convenient_name, traffic_file):
     }
     return dic_paths
 
-def pipeline_wrapper(dic_agent_conf, dic_traffic_env_conf, dic_path, roadnet, trafficflow):
+def pipeline_wrapper(dic_agent_conf, dic_traffic_env_conf, dic_path, roadnet, trafficflow, run_name):
     results_table = []
     all_rewards = []
     all_queue_len = []
     all_travel_time = []
-    for i in range(1):
-        dic_path["PATH_TO_TRAINED_CHECKPOINTS"] = (dic_path["PATH_TO_TRAINED_CHECKPOINTS"].split(".")[0] + ".json" +
-                                     time.strftime('%m_%d_%H_%M_%S', time.localtime(time.time())))
-        dic_path["PATH_TO_WORK_DIRECTORY"] = (dic_path["PATH_TO_WORK_DIRECTORY"].split(".")[0] + ".json" +
-                                              time.strftime('%m_%d_%H_%M_%S', time.localtime(time.time())))
-        ppl = Pipeline(dic_agent_conf=dic_agent_conf,
-                       dic_traffic_env_conf=dic_traffic_env_conf,
-                       dic_path=dic_path,
-                       roadnet=roadnet,
-                       trafficflow=trafficflow)
-        round_results = ppl.run(round=i, multi_process=False)
-        results_table.append([round_results['test_reward_over'], round_results['test_avg_queue_len_over'], round_results['test_avg_travel_time_over']])
-        all_rewards.append(round_results['test_reward_over'])
-        all_queue_len.append(round_results['test_avg_queue_len_over'])
-        all_travel_time.append(round_results['test_avg_travel_time_over'])
+    dic_path["PATH_TO_TRAINED_CHECKPOINTS"] = (dic_path["PATH_TO_TRAINED_CHECKPOINTS"].split(".")[0] + ".json" +
+                                    time.strftime('%m_%d_%H_%M_%S', time.localtime(time.time())))
+    dic_path["PATH_TO_WORK_DIRECTORY"] = (dic_path["PATH_TO_WORK_DIRECTORY"].split(".")[0] + ".json" +
+                                            time.strftime('%m_%d_%H_%M_%S', time.localtime(time.time())))
+    ppl = Pipeline(dic_agent_conf=dic_agent_conf,
+                    dic_traffic_env_conf=dic_traffic_env_conf,
+                    dic_path=dic_path,
+                    roadnet=roadnet,
+                    trafficflow=trafficflow)
+    round_results = ppl.run(run_name, multi_process=False)
+    results_table.append([round_results['test_reward_over'], round_results['test_avg_queue_len_over'], round_results['test_avg_travel_time_over']])
+    all_rewards.append(round_results['test_reward_over'])
+    all_queue_len.append(round_results['test_avg_queue_len_over'])
+    all_travel_time.append(round_results['test_avg_travel_time_over'])
 
         # delete junk
         # cmd_delete_model = 'find <dir> -type f ! -name "round_<round>_inter_*.h5" -exec rm -rf {} \;'.replace("<dir>", dic_path["PATH_TO_TRAINED_CHECKPOINTS"]).replace("<round>", str(int(dic_traffic_env_conf["NUM_ROUNDS"] - 1)))

@@ -62,7 +62,7 @@ def main(in_args=None):
         "NUM_AGENTS": 1,
         "NUM_INTERSECTIONS": num_intersections,
         "RUN_COUNTS": count,
-        "MODEL_NAME": in_args.run_convenient_name,
+        "MODEL_NAME": in_args.model,
         "MODEL": in_args.model,
         "PROJECT_NAME": in_args.proj_name,
         "NUM_ROW": NUM_ROW,
@@ -90,7 +90,8 @@ def main(in_args=None):
                      dic_traffic_env_conf=deploy_dic_traffic_env_conf,
                      dic_path=dic_paths,
                      roadnet=f'{city_dir_name}-{road_net}',
-                     trafficflow=in_args.traffic_file.split(".")[0])
+                     trafficflow=in_args.traffic_file.split(".")[0],
+                     run_name=in_args.run_convenient_name)
 
     return in_args.run_convenient_name
 

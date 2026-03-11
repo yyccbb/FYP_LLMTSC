@@ -95,7 +95,7 @@ class Pipeline:
         copy_conf_file(self.dic_path, self.dic_agent_conf, self.dic_traffic_env_conf)
         copy_cityflow_file(self.dic_path, self.dic_traffic_env_conf)
 
-    def run(self, round, multi_process=False):
+    def run(self, run_name, multi_process=False):
         f_time = open(os.path.join(self.dic_path["PATH_TO_WORK_DIRECTORY"], "running_time.csv"), "w")
         f_time.write("generator_time\tmaking_samples_time\tupdate_network_time\ttest_evaluation_times\tall_times\n")
         f_time.close()
@@ -105,7 +105,7 @@ class Pipeline:
         logger = wandb.init(
             project=self.dic_traffic_env_conf['PROJECT_NAME'],
             group=f"{self.dic_traffic_env_conf['MODEL']}-{self.dic_traffic_env_conf['ROADNET_FILE']}-{self.dic_traffic_env_conf['TRAFFIC_FILE']}-{len(self.dic_traffic_env_conf['PHASE'])}_Phases",
-            name=f"round_{round}",
+            name=run_name,
             config=all_config,
         )
 
