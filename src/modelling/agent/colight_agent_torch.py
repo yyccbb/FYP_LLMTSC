@@ -209,10 +209,7 @@ class CoLightAgentTorch(Agent):
         if cnt_round == 0:
             self.q_network = self.build_network()
             if os.path.isdir(self.dic_path["PATH_TO_TRAINED_CHECKPOINTS"]) and os.listdir(self.dic_path["PATH_TO_TRAINED_CHECKPOINTS"]):
-                round_0_path = os.path.join(
-                    self.dic_path["PATH_TO_TRAINED_CHECKPOINTS"],
-                    f"round_0_inter_{intersection_id}.h5",
-                )
+                round_0_path = self._get_model_path(f"round_0_inter_{intersection_id}")
                 if os.path.exists(round_0_path):
                     self.load_network(f"round_0_inter_{intersection_id}")
             self.q_network_bar = self.build_network_from_copy(self.q_network)
@@ -497,16 +494,17 @@ class CoLightAgentTorch(Agent):
     def _get_model_path(self, file_name, file_path=None):
         if file_path is None:
             file_path = self.dic_path["PATH_TO_TRAINED_CHECKPOINTS"]
-        return os.path.join(file_path, f"{file_name}.h5")
+        return os.path.join(file_path, f"{file_name}.pt")
 
     def load_network(self, file_name, file_path=None):
         model_path = self._get_model_path(file_name, file_path)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Checkpoint not found: {model_path}."
+            )
         self.q_network = self.build_network()
         checkpoint = torch.load(model_path, map_location=self.device)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            self.q_network.load_state_dict(checkpoint["state_dict"])
-        else:
-            self.q_network.load_state_dict(checkpoint)
+        self.q_network.load_state_dict(checkpoint)
         self.optimizer = torch.optim.Adam(
             self.q_network.parameters(), lr=self.dic_agent_conf["LEARNING_RATE"]
         )
@@ -515,24 +513,25 @@ class CoLightAgentTorch(Agent):
 
     def load_network_bar(self, file_name, file_path=None):
         model_path = self._get_model_path(file_name, file_path)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Checkpoint not found: {model_path}."
+            )
         self.q_network_bar = self.build_network()
         checkpoint = torch.load(model_path, map_location=self.device)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            self.q_network_bar.load_state_dict(checkpoint["state_dict"])
-        else:
-            self.q_network_bar.load_state_dict(checkpoint)
+        self.q_network_bar.load_state_dict(checkpoint)
         self.q_network_bar.eval()
         print(f"succeed in loading model {file_name}")
 
     def save_network(self, file_name):
         model_path = self._get_model_path(file_name)
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        torch.save({"state_dict": self.q_network.state_dict()}, model_path)
+        torch.save(self.q_network.state_dict(), model_path)
 
     def save_network_bar(self, file_name):
         model_path = self._get_model_path(file_name)
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        torch.save({"state_dict": self.q_network_bar.state_dict()}, model_path)
+        torch.save(self.q_network_bar.state_dict(), model_path)
 
 
 class CoLightAgent(CoLightAgentTorch):
