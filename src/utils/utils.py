@@ -52,14 +52,14 @@ def pipeline_wrapper(dic_agent_conf, dic_traffic_env_conf, dic_path, roadnet, tr
     all_queue_len.append(round_results['test_avg_queue_len_over'])
     all_travel_time.append(round_results['test_avg_travel_time_over'])
 
-        # delete junk
-        # cmd_delete_model = 'find <dir> -type f ! -name "round_<round>_inter_*.h5" -exec rm -rf {} \;'.replace("<dir>", dic_path["PATH_TO_TRAINED_CHECKPOINTS"]).replace("<round>", str(int(dic_traffic_env_conf["NUM_ROUNDS"] - 1)))
-        # cmd_delete_work = 'find <dir> -type f ! -name "state_action.json" -exec rm -rf {} \;'.replace("<dir>", dic_path["PATH_TO_WORK_DIRECTORY"])
-        # os.system(cmd_delete_model)
-        # os.system(cmd_delete_work)
+    # delete junk
+    # cmd_delete_model = 'find <dir> -type f ! -name "round_<round>_inter_*.h5" -exec rm -rf {} \;'.replace("<dir>", dic_path["PATH_TO_TRAINED_CHECKPOINTS"]).replace("<round>", str(int(dic_traffic_env_conf["NUM_ROUNDS"] - 1)))
+    # cmd_delete_work = 'find <dir> -type f ! -name "state_action.json" -exec rm -rf {} \;'.replace("<dir>", dic_path["PATH_TO_WORK_DIRECTORY"])
+    # os.system(cmd_delete_model)
+    # os.system(cmd_delete_work)
 
-    results_table.append([np.average(all_rewards), np.average(all_queue_len), np.average(all_travel_time)])
-    results_table.append([np.std(all_rewards), np.std(all_queue_len), np.std(all_travel_time)])
+    # results_table.append([np.average(all_rewards), np.average(all_queue_len), np.average(all_travel_time)])
+    # results_table.append([np.std(all_rewards), np.std(all_queue_len), np.std(all_travel_time)])
 
     table_logger = wandb.init(
         project=dic_traffic_env_conf['PROJECT_NAME'],

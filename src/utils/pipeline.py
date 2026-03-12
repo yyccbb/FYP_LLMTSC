@@ -209,9 +209,9 @@ class Pipeline:
                                                             time.time() - round_start_time))
             f_time.close()
 
-        last_10_results = {ele: np.mean(last_10_results[ele]) for ele in last_10_results}
         logger.log(last_10_results)
-        print(last_10_results)
+        last_10_results = {ele: np.mean(last_10_results[ele]) for ele in last_10_results}
+        print(f"last_10_results averaged:{last_10_results}")
         f_state_action = os.path.join(self.dic_path["PATH_TO_WORK_DIRECTORY"], "state_action.json")
         with open(f_state_action, "w") as file:
             json.dump(state_action_log, file, indent=4)
