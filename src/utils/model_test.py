@@ -24,7 +24,7 @@ def model_test(model_dir, data_dir, cnt_round, run_cnt, _dic_traffic_env_conf, l
         dic_agent_conf["EPSILON"] = 0
         dic_agent_conf["MIN_EPSILON"] = 0
 
-    agents = []
+    agents: list[CoLightAgentTorch] = []
     for i in range(dic_traffic_env_conf['NUM_AGENTS']):
         agent = CoLightAgentTorch(
             dic_agent_conf=dic_agent_conf,
@@ -92,7 +92,6 @@ def model_test(model_dir, data_dir, cnt_round, run_cnt, _dic_traffic_env_conf, l
                 waiting_times.append(env.waiting_vehicle_list[veh]['time'])
             waiting_time_episode.append(np.mean(waiting_times) if len(waiting_times) > 0 else 0.0)
 
-        # wandb logger
         vehicle_travel_times = {}
         for inter in env.list_intersection:
             arrive_left_times = inter.dic_vehicle_arrive_leave_time
