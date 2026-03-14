@@ -1,3 +1,43 @@
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class CitySpecs:
+    count: int
+    road_net: str
+    list_traffic_files: tuple[str, ...]
+
+DIC_CITY_SPECS = {
+    "Jinan": CitySpecs(
+        3600, 
+        "3_4", 
+        (
+            "anon_3_4_jinan_real.json",
+            "anon_3_4_jinan_real_2000.json",
+            "anon_3_4_jinan_real_2500.json",
+            "anon_3_4_jinan_synthetic_24000_60min.json"
+        )
+    ),
+    "Hangzhou": CitySpecs(
+        3600,
+        "4_4",
+        (
+            "anon_4_4_hangzhou_real.json", 
+            "anon_4_4_hangzhou_real_5816.json",
+            "anon_4_4_hangzhou_synthetic_24000_60min.json"
+        )
+    ),
+    "NewYork": CitySpecs(
+        3600,
+        "28_7",
+        (
+            "anon_28_7_newyork_real_double.json",
+            "anon_28_7_newyork_real_triple.json"
+        )
+    )
+}
+
+DIC_CITY_ALIASES = {city_name.lower(): city_name for city_name in DIC_CITY_SPECS.keys()}
+
 DIC_PATH = {
     "PATH_TO_TRAINED_CHECKPOINTS": "checkpoints/default",
     "PATH_TO_WORK_DIRECTORY": "records/default",
@@ -5,7 +45,7 @@ DIC_PATH = {
     "PATH_TO_ERROR": "errors/default",
 }
 
-dic_traffic_env_conf = {
+DIC_TRAFFIC_ENV_CONF = {
 
     "LIST_MODEL": ["Random", "Fixedtime",  "MaxPressure", "EfficientMaxPressure", "AdvancedMaxPressure",
                    "EfficientPressLight", "EfficientColight", "EfficientMPLight",
