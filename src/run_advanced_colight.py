@@ -1,7 +1,6 @@
 from src.utils.utils import pipeline_wrapper, merge, prepare_paths, run_debugpy_server
-from src.utils import config
+from src.utils.config import DIC_CITY_SPECS, DIC_CITY_ALIASES, DIC_BASE_AGENT_CONF, DIC_TRAFFIC_ENV_CONF
 import argparse
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -21,29 +20,23 @@ def main(in_args=None):
     if in_args.debug:
         run_debugpy_server()
 
-    traffic_file_list = []
+    city_dir_name = DIC_CITY_ALIASES.get(in_args.city.lower())
+    if city_dir_name is None:
+        raise ValueError(
+            f"Unsupported city '{in_args.city}'. Available cities: {', '.join(DIC_CITY_SPECS.keys())}"
+        )
 
-    if in_args.city == 'jinan':
-        count = 3600
-        road_net = "3_4"
-        traffic_file_list = ["anon_3_4_jinan_real.json", "anon_3_4_jinan_real_2000.json",
-                             "anon_3_4_jinan_real_2500.json", "anon_3_4_jinan_synthetic_24000_60min.json"]
-        num_rounds = in_args.epochs
-        city_dir_name = "Jinan"
-    elif in_args.city == 'hangzhou':
-        count = 3600
-        road_net = "4_4"
-        traffic_file_list = ["anon_4_4_hangzhou_real.json", "anon_4_4_hangzhou_real_5816.json", "anon_4_4_hangzhou_synthetic_24000_60min.json"]
-        num_rounds = in_args.epochs
-        city_dir_name = "Hangzhou"
-    elif in_args.city == 'newyork':
-        count = 3600
-        road_net = "28_7"
-        traffic_file_list = ["anon_28_7_newyork_real_double.json", "anon_28_7_newyork_real_triple.json"]
-        num_rounds = in_args.epochs
-        city_dir_name = "NewYork"
+    city_specs = DIC_CITY_SPECS[city_dir_name]
+    count = city_specs.count
+    road_net = city_specs.road_net
+    traffic_file_list = city_specs.list_traffic_files
+    num_rounds = in_args.epochs
 
-    assert in_args.traffic_file in traffic_file_list
+    if in_args.traffic_file not in traffic_file_list:
+        raise ValueError(
+            f"Unsupported traffic_file '{in_args.traffic_file}' for city '{in_args.city}'. "
+            f"Available files: {', '.join(traffic_file_list)}"
+        )
 
     NUM_COL = int(road_net.split('_')[1])
     NUM_ROW = int(road_net.split('_')[0])
@@ -54,7 +47,7 @@ def main(in_args=None):
     dic_agent_conf_extra = {
         "CNN_layers": [[32, 32]],
     }
-    deploy_dic_agent_conf = merge(getattr(config, "DIC_BASE_AGENT_CONF"), dic_agent_conf_extra)
+    deploy_dic_agent_conf = merge(DIC_BASE_AGENT_CONF, dic_agent_conf_extra)
 
     dic_traffic_env_conf_extra = {
         "NUM_ROUNDS": num_rounds,
@@ -70,7 +63,7 @@ def main(in_args=None):
         'MIN_ACTION_TIME': in_args.action_interval,
         'MEASURE_TIME': in_args.action_interval,
         "TRAFFIC_FILE": in_args.traffic_file,
-        "ROADNET_FILE": "roadnet_{0}.json".format(road_net),
+        "ROADNET_FILE": f"roadnet_{road_net}.json",
         "LIST_STATE_FEATURE": [
             "cur_phase",
             "traffic_movement_pressure_queue_efficient",
@@ -82,7 +75,7 @@ def main(in_args=None):
             "queue_length": -0.25,
         },
     }
-    deploy_dic_traffic_env_conf = merge(config.dic_traffic_env_conf, dic_traffic_env_conf_extra)
+    deploy_dic_traffic_env_conf = merge(DIC_TRAFFIC_ENV_CONF, dic_traffic_env_conf_extra)
 
     dic_paths = prepare_paths(city_dir_name, in_args.run_convenient_name, in_args.traffic_file)
 
