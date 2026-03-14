@@ -4,7 +4,7 @@ import time
 import traceback
 import random
 
-from src.modelling.agent.colight_agent_torch import CoLightAgentTorch
+from modelling.agent.colight_agent import CoLightAgentTorch
 
 
 class Updater:
