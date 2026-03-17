@@ -1,5 +1,6 @@
 from src.utils.utils import pipeline_wrapper, merge, prepare_paths, run_debugpy_server
 from src.utils.config import DIC_CITY_SPECS, DIC_CITY_ALIASES, DIC_BASE_AGENT_CONF, DIC_TRAFFIC_ENV_CONF
+from src.utils.errors import *
 import argparse
 
 def parse_args():
@@ -22,9 +23,7 @@ def main(in_args=None):
 
     city_dir_name = DIC_CITY_ALIASES.get(in_args.city.lower())
     if city_dir_name is None:
-        raise ValueError(
-            f"Unsupported city '{in_args.city}'. Available cities: {', '.join(DIC_CITY_SPECS.keys())}"
-        )
+        raise InvalidCityError(city_dir_name)
 
     city_specs = DIC_CITY_SPECS[city_dir_name]
     count = city_specs.count

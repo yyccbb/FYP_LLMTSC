@@ -38,11 +38,11 @@ DIC_CITY_SPECS = {
 
 DIC_CITY_ALIASES = {city_name.lower(): city_name for city_name in DIC_CITY_SPECS.keys()}
 
-DIC_PATH = {
-    "PATH_TO_TRAINED_CHECKPOINTS": "checkpoints/default",
-    "PATH_TO_WORK_DIRECTORY": "records/default",
-    "PATH_TO_DATA": "data/template",
-    "PATH_TO_ERROR": "errors/default",
+DIC_PATHS = {
+    "PATH_TO_TRAINED_CHECKPOINTS": "checkpoints/",
+    "PATH_TO_WORK_DIRECTORY": "logs/",
+    "PATH_TO_DATA": "data/",
+    "PATH_TO_ERROR": "errors/",
 }
 
 DIC_TRAFFIC_ENV_CONF = {
