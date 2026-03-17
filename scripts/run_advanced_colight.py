@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument("--action_interval", type=int, default=30)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--gen", type=int, default=1)
-    parser.add_argument("--debug", type=bool, default=False)
+    parser.add_argument("--debug", action="store_true", default=False)
     return parser.parse_args()
 
 
