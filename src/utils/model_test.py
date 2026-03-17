@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
 
-from modelling.agent.colight_agent import CoLightAgentTorch
+from src.modelling.agent.colight_agent import CoLightAgentTorch
 from src.env.cityflow_env import CityFlowEnv
 from src.env.utils import get_state_detail, eight_phase_list
 

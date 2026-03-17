@@ -4,7 +4,7 @@ import copy
 import numpy as np
 from tqdm import tqdm
 
-from modelling.agent.colight_agent import CoLightAgentTorch
+from src.modelling.agent.colight_agent import CoLightAgentTorch
 from src.env.cityflow_env import CityFlowEnv
 
 class Generator:
