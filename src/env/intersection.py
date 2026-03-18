@@ -2,6 +2,7 @@ import numpy as np
 import sys
 import pandas as pd
 import os
+import copy
 
 class Intersection:
     def __init__(self, inter_id, dic_traffic_env_conf, eng, light_id_dict, path_to_log, lanes_length_dict):
@@ -452,6 +453,47 @@ class Intersection:
 
     def _get_adjacency_row(self):
         return self.adjacency_row
+
+    @staticmethod
+    def _intersection_snapshot_fields():
+        return [
+            "current_phase_index",
+            "previous_phase_index",
+            "next_phase_to_set_index",
+            "current_phase_duration",
+            "all_red_flag",
+            "all_yellow_flag",
+            "flicker",
+            "dic_lane_vehicle_previous_step",
+            "dic_lane_vehicle_previous_step_in",
+            "dic_lane_waiting_vehicle_count_previous_step",
+            "dic_vehicle_speed_previous_step",
+            "dic_vehicle_distance_previous_step",
+            "dic_lane_vehicle_current_step_in",
+            "dic_lane_vehicle_current_step",
+            "dic_lane_waiting_vehicle_count_current_step",
+            "dic_vehicle_speed_current_step",
+            "dic_vehicle_distance_current_step",
+            "list_lane_vehicle_previous_step_in",
+            "list_lane_vehicle_current_step_in",
+            "dic_vehicle_arrive_leave_time",
+            "dic_feature",
+            "dic_feature_previous_step",
+        ]
+
+    def capture_snapshot(self):
+        snapshot = {}
+        for field_name in self._intersection_snapshot_fields():
+            snapshot[field_name] = copy.deepcopy(getattr(self, field_name))
+        return snapshot
+
+    def load_snapshot(self, inter_snapshot):
+        for field_name in self._intersection_snapshot_fields():
+            if field_name not in inter_snapshot:
+                raise KeyError(
+                    f"Intersection snapshot for {self.inter_name} is missing '{field_name}'."
+                )
+            setattr(self, field_name, copy.deepcopy(inter_snapshot[field_name]))
 
     def get_reward(self, dic_reward_info):
         dic_reward = dict()

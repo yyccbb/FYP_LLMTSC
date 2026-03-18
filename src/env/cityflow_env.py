@@ -4,6 +4,7 @@ import json
 import sys
 import pandas as pd
 import os
+import copy
 import cityflow as engine
 import time
 from multiprocessing import Process
@@ -351,6 +352,62 @@ class CityFlowEnv:
 
     def get_current_time(self):
         return self.eng.get_current_time()
+
+    def capture_snapshot(self):
+        """
+        Capture an in-memory snapshot of both CityFlow engine state and
+        Python-side environment/intersection state.
+        """
+        if self.eng is None or self.list_intersection is None:
+            raise RuntimeError("Environment is not initialized. Call reset() first.")
+        if not hasattr(self.eng, "snapshot"):
+            raise NotImplementedError("CityFlow Engine does not expose snapshot().")
+
+        snapshot = {
+            "engine_snapshot": self.eng.snapshot(),
+            "current_time": self.current_time,
+            "waiting_vehicle_list": copy.deepcopy(self.waiting_vehicle_list),
+            "system_states": copy.deepcopy(self.system_states),
+            "intersection_states": {},
+        }
+        for inter in self.list_intersection:
+            snapshot["intersection_states"][inter.inter_name] = inter.capture_snapshot()
+
+        return snapshot
+
+    def load_snapshot(self, snapshot):
+        """
+        Restore an in-memory snapshot previously created by capture_snapshot().
+        """
+        if self.eng is None or self.list_intersection is None:
+            raise RuntimeError("Environment is not initialized. Call reset() first.")
+        if snapshot is None:
+            raise ValueError("snapshot cannot be None.")
+        if "engine_snapshot" not in snapshot:
+            raise KeyError("snapshot is missing 'engine_snapshot'.")
+        if not hasattr(self.eng, "load"):
+            raise NotImplementedError("CityFlow Engine does not expose load().")
+
+        self.eng.load(snapshot["engine_snapshot"])
+        self.current_time = self.get_current_time()
+        self.waiting_vehicle_list = copy.deepcopy(snapshot.get("waiting_vehicle_list", {}))
+        self.system_states = copy.deepcopy(snapshot.get("system_states", {}))
+
+        intersection_states = snapshot.get("intersection_states")
+        if intersection_states is None:
+            raise KeyError("snapshot is missing 'intersection_states'.")
+
+        missing_intersections = [
+            inter.inter_name for inter in self.list_intersection
+            if inter.inter_name not in intersection_states
+        ]
+        if missing_intersections:
+            raise KeyError(
+                f"snapshot is missing states for intersections: {missing_intersections}"
+            )
+
+        for inter in self.list_intersection:
+            inter.load_snapshot(intersection_states[inter.inter_name])
 
     def log(self, cur_time, before_action_feature, action):
 
