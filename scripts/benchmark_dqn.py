@@ -34,7 +34,7 @@ METRIC_FIELDS = [
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint_path", type=str, required=True)
+    parser.add_argument("--checkpoint_path", type=str, default="checkpoints/run_save_pt/anon_4_4_hangzhou_real.json03_11_22_16_15/round_99_inter_0.pt")
     parser.add_argument(
         "--city",
         type=str,
