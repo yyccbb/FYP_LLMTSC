@@ -4,44 +4,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from src.rl.prompting.parser import parse_signal
 
-_TRL_IMPORT_UTILS_PATCHED = False
-
-
-def _patch_trl_import_utils_transformers_v5_compat() -> None:
-    """Patch TRL optional-dependency flags when transformers v5 returns tuples."""
-    global _TRL_IMPORT_UTILS_PATCHED
-    if _TRL_IMPORT_UTILS_PATCHED:
-        return
-    _TRL_IMPORT_UTILS_PATCHED = True
-
-    try:
-        import trl.import_utils as _trl_import_utils
-    except Exception:
-        return
-
-    raw_value = getattr(_trl_import_utils, "_vllm_ascend_available", None)
-    if isinstance(raw_value, tuple):
-        _trl_import_utils._vllm_ascend_available = bool(raw_value[0])
-
-    original_check = getattr(_trl_import_utils, "is_vllm_ascend_available", None)
-    if not callable(original_check):
-        return
-
-    try:
-        probe = original_check()
-    except Exception:
-        return
-
-    if isinstance(probe, tuple):
-        def _patched_check() -> bool:
-            result = original_check()
-            if isinstance(result, tuple):
-                return bool(result[0])
-            return bool(result)
-
-        _trl_import_utils.is_vllm_ascend_available = _patched_check
-
-
 def _completion_to_text(completion: Any) -> str:
     if isinstance(completion, str):
         return completion
@@ -86,8 +48,6 @@ class GRPOTrainingRunner:
         self.invalid_action_reward = float(invalid_action_reward)
 
     def _build_grpo_args(self):
-        _patch_trl_import_utils_transformers_v5_compat()
-
         try:
             from trl import GRPOConfig
         except ImportError as exc:
@@ -96,35 +56,38 @@ class GRPOTrainingRunner:
             ) from exc
 
         cfg = self.grpo_config
-        return GRPOConfig(
-            output_dir=cfg["output_dir"],
-            learning_rate=float(cfg.get("learning_rate", 1e-6)),
-            per_device_train_batch_size=int(cfg.get("per_device_train_batch_size", 1)),
-            gradient_accumulation_steps=int(cfg.get("gradient_accumulation_steps", 1)),
-            num_train_epochs=float(cfg.get("num_train_epochs", 1.0)),
-            logging_steps=int(cfg.get("logging_steps", 1)),
-            save_steps=int(cfg.get("save_steps", 1000)),
-            save_total_limit=int(cfg.get("save_total_limit", 2)),
-            report_to=cfg.get("report_to", "none"),
-            num_generations=int(cfg["num_generations"]),
-            max_completion_length=int(cfg.get("max_completion_length", 256)),
-            temperature=float(cfg.get("temperature", 1.0)),
-            top_p=float(cfg.get("top_p", 1.0)),
-            top_k=int(cfg.get("top_k", 0)),
-            scale_rewards=cfg.get("scale_rewards", "group"),
-            beta=float(cfg.get("beta", 0.02)),
-            num_iterations=int(cfg.get("num_iterations", 1)),
-            remove_unused_columns=False,
-            eval_strategy="no",
-            save_strategy=cfg.get("save_strategy", "steps"),
-        )
+        grpo_kwargs = {
+            "output_dir": cfg["output_dir"],
+            "learning_rate": float(cfg.get("learning_rate", 1e-6)),
+            "per_device_train_batch_size": int(cfg.get("per_device_train_batch_size", 1)),
+            "gradient_accumulation_steps": int(cfg.get("gradient_accumulation_steps", 1)),
+            "steps_per_generation": cfg.get("steps_per_generation"),
+            "num_train_epochs": float(cfg.get("num_train_epochs", 1.0)),
+            "logging_steps": int(cfg.get("logging_steps", 1)),
+            "save_steps": int(cfg.get("save_steps", 1000)),
+            "save_total_limit": int(cfg.get("save_total_limit", 2)),
+            "report_to": cfg.get("report_to", "none"),
+            "num_generations": int(cfg["num_generations"]),
+            "max_completion_length": int(cfg.get("max_completion_length", 256)),
+            "temperature": float(cfg.get("temperature", 1.0)),
+            "top_p": float(cfg.get("top_p", 1.0)),
+            "top_k": int(cfg.get("top_k", 0)),
+            "scale_rewards": cfg.get("scale_rewards", "group"),
+            "beta": float(cfg.get("beta", 0.02)),
+            "num_iterations": int(cfg.get("num_iterations", 1)),
+            "remove_unused_columns": False,
+            "eval_strategy": "no",
+            "save_strategy": cfg.get("save_strategy", "steps"),
+        }
+        if cfg.get("run_name") is not None:
+            grpo_kwargs["run_name"] = cfg.get("run_name")
+
+        return GRPOConfig(**grpo_kwargs)
 
     def train_on_records(self, model, tokenizer, records: Iterable[Dict[str, Any]]):
         records = list(records)
         if len(records) == 0:
             return None
-
-        _patch_trl_import_utils_transformers_v5_compat()
 
         try:
             from datasets import Dataset

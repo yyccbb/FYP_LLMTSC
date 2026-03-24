@@ -57,6 +57,7 @@ class QGuidedGRPOPipeline:
         self._build_city_and_env_conf()
 
         self.dic_path = self._prepare_paths()
+        self.wandb_enabled = bool(self.config["logging"]["wandb"]["enabled"])
         self._copy_cityflow_files()
 
         self.env = env
@@ -88,6 +89,8 @@ class QGuidedGRPOPipeline:
         self.config.setdefault("rollout", {})
         self.config.setdefault("grpo", {})
         self.config.setdefault("train", {})
+        self.config.setdefault("logging", {})
+        self.config["logging"].setdefault("wandb", {})
 
         self.config["rollout"].setdefault("k", 4)
         self.config["rollout"].setdefault("invalid_action_reward", 0.0)
@@ -98,6 +101,7 @@ class QGuidedGRPOPipeline:
 
         self.config["train"].setdefault("episodes", 1)
         self.config["train"].setdefault("save_every_episode", 1)
+        self.config["logging"]["wandb"].setdefault("enabled", False)
 
     def _build_city_and_env_conf(self) -> None:
         env_cfg = self.config["env"]
@@ -170,6 +174,7 @@ class QGuidedGRPOPipeline:
             timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
             traffic_key = self.dic_traffic_env_conf["TRAFFIC_FILE"].replace(".json", "")
             run_name = f"qguided_grpo_{self.city_name.lower()}_{traffic_key}_{timestamp}"
+        self.run_name = run_name
 
         output_root = paths_cfg.get("output_root", "logs/rl_grpo")
         checkpoint_root = paths_cfg.get("checkpoint_root", "checkpoints/rl_grpo")
@@ -186,6 +191,20 @@ class QGuidedGRPOPipeline:
             "PATH_TO_TRAINED_CHECKPOINTS": path_to_checkpoints,
             "PATH_TO_DATA": os.path.join(data_root, self.city_name),
         }
+
+    def _init_wandb_run(self):
+        try:
+            import wandb
+        except ImportError as exc:
+            raise ImportError(
+                "wandb is required when logging.wandb.enabled is True."
+            ) from exc
+
+        return wandb.init(
+            project=self.dic_traffic_env_conf["PROJECT_NAME"],
+            name=self.run_name,
+            config=self.config,
+        )
 
     def _copy_cityflow_files(self) -> None:
         roadnet = self.dic_traffic_env_conf["ROADNET_FILE"]
@@ -306,10 +325,19 @@ class QGuidedGRPOPipeline:
         grpo_cfg = copy.deepcopy(self.config["grpo"])
         grpo_cfg["num_generations"] = int(self.config["rollout"]["k"])
         grpo_cfg.setdefault("max_completion_length", int(self.config["rollout"].get("max_new_tokens", 256)))
+        grpo_cfg.setdefault("run_name", self.run_name)
+        grpo_cfg["output_dir"] = self._resolve_grpo_output_dir(grpo_cfg.get("output_dir"))
         return GRPOTrainingRunner(
             grpo_config=grpo_cfg,
             invalid_action_reward=float(self.config["rollout"].get("invalid_action_reward", 0.0)),
         )
+
+    def _resolve_grpo_output_dir(self, configured_output_dir: Optional[str]) -> str:
+        checkpoint_root = self.config["paths"].get("checkpoint_root", "checkpoints/rl_grpo")
+        base_dir = configured_output_dir or checkpoint_root
+        normalized_base_dir = os.path.normpath(base_dir)
+
+        return os.path.join(normalized_base_dir, self.run_name)
 
     def _save_policy_checkpoint(self, episode_idx: int) -> str:
         checkpoint_dir = os.path.join(
@@ -327,40 +355,45 @@ class QGuidedGRPOPipeline:
         episodes = int(self.config["train"]["episodes"])
         save_every = int(self.config["train"].get("save_every_episode", 1))
 
+        wandb_run = self._init_wandb_run() if self.wandb_enabled else None
         run_logs: List[Dict[str, Any]] = []
-        for episode_idx in range(episodes):
-            # rollout_result = self.collector.collect_episode(
-            #     run_counts=self.run_counts,
-            #     action_interval=self.action_interval,
-            # )
-            # trainer = self.grpo_runner.train_on_records(
-            #     model=self.policy_model,
-            #     tokenizer=self.tokenizer,
-            #     records=rollout_result.dataset_records,
-            # )
-            import pickle
-            with open('data.pkl', "rb") as f:
-                dataset_records = pickle.load(f)
+        try:
+            for episode_idx in range(episodes):
+                # rollout_result = self.collector.collect_episode(
+                #     run_counts=self.run_counts,
+                #     action_interval=self.action_interval,
+                # )
+                # trainer = self.grpo_runner.train_on_records(
+                #     model=self.policy_model,
+                #     tokenizer=self.tokenizer,
+                #     records=rollout_result.dataset_records,
+                # )
+                import pickle
+                with open('data.pkl', "rb") as f:
+                    dataset_records = pickle.load(f)
 
-            trainer = self.grpo_runner.train_on_records(
-                model=self.policy_model,
-                tokenizer=self.tokenizer,
-                records=dataset_records
-            )
+                trainer = self.grpo_runner.train_on_records(
+                    model=self.policy_model,
+                    tokenizer=self.tokenizer,
+                    records=dataset_records
+                )
 
-            checkpoint_path = None
-            if save_every > 0 and (episode_idx + 1) % save_every == 0:
-                checkpoint_path = self._save_policy_checkpoint(episode_idx)
+                checkpoint_path = None
+                if save_every > 0 and (episode_idx + 1) % save_every == 0:
+                    checkpoint_path = self._save_policy_checkpoint(episode_idx)
 
-            run_logs.append(
-                {
-                    "episode": episode_idx,
-                    "steps": rollout_result.num_steps,
-                    "dataset_records": len(rollout_result.dataset_records),
-                    "checkpoint_path": checkpoint_path,
-                    "trainer_built": trainer is not None,
-                }
-            )
+                run_logs.append(
+                    {
+                        "episode": episode_idx,
+                        # "steps": rollout_result.num_steps,
+                        # "dataset_records": len(rollout_result.dataset_records),
+                        "checkpoint_path": checkpoint_path,
+                        "trainer_built": trainer is not None,
+                    }
+                )
+        finally:
+            if wandb_run is not None:
+                wandb_run.finish()
 
         return run_logs
 

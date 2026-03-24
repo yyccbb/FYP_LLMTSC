@@ -21,7 +21,7 @@ policy:
   dtype: bfloat16
   device_map: auto
   lora:
-    enabled: false
+    enabled: true
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -51,10 +51,11 @@ rollout:
   do_sample: true
 
 grpo:
-  output_dir: checkpoints/rl_grpo/grpo_runs
+  output_dir: checkpoints/rl_grpo
   learning_rate: 1.0e-6
-  per_device_train_batch_size: 1
+  per_device_train_batch_size: 4
   gradient_accumulation_steps: 1
+  steps_per_generation: null
   num_train_epochs: 1
   logging_steps: 1
   save_steps: 1000
