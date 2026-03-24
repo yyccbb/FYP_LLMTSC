@@ -4,6 +4,43 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from src.rl.prompting.parser import parse_signal
 
+_TRL_IMPORT_UTILS_PATCHED = False
+
+
+def _patch_trl_import_utils_transformers_v5_compat() -> None:
+    """Patch TRL optional-dependency flags when transformers v5 returns tuples."""
+    global _TRL_IMPORT_UTILS_PATCHED
+    if _TRL_IMPORT_UTILS_PATCHED:
+        return
+    _TRL_IMPORT_UTILS_PATCHED = True
+
+    try:
+        import trl.import_utils as _trl_import_utils
+    except Exception:
+        return
+
+    raw_value = getattr(_trl_import_utils, "_vllm_ascend_available", None)
+    if isinstance(raw_value, tuple):
+        _trl_import_utils._vllm_ascend_available = bool(raw_value[0])
+
+    original_check = getattr(_trl_import_utils, "is_vllm_ascend_available", None)
+    if not callable(original_check):
+        return
+
+    try:
+        probe = original_check()
+    except Exception:
+        return
+
+    if isinstance(probe, tuple):
+        def _patched_check() -> bool:
+            result = original_check()
+            if isinstance(result, tuple):
+                return bool(result[0])
+            return bool(result)
+
+        _trl_import_utils.is_vllm_ascend_available = _patched_check
+
 
 def _completion_to_text(completion: Any) -> str:
     if isinstance(completion, str):
@@ -49,6 +86,8 @@ class GRPOTrainingRunner:
         self.invalid_action_reward = float(invalid_action_reward)
 
     def _build_grpo_args(self):
+        _patch_trl_import_utils_transformers_v5_compat()
+
         try:
             from trl import GRPOConfig
         except ImportError as exc:
@@ -84,6 +123,8 @@ class GRPOTrainingRunner:
         records = list(records)
         if len(records) == 0:
             return None
+
+        _patch_trl_import_utils_transformers_v5_compat()
 
         try:
             from datasets import Dataset
