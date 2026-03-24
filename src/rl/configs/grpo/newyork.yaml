@@ -1,0 +1,3 @@
+env:
+  city: newyork
+  traffic_file: anon_28_7_newyork_real_double.json

@@ -1,0 +1,74 @@
+paths:
+  output_root: logs/rl_grpo
+  checkpoint_root: checkpoints/rl_grpo
+  data_root: data
+
+env:
+  city: hangzhou
+  traffic_file: anon_4_4_hangzhou_real.json
+  run_counts: 3600
+  action_interval: 30
+  model_name: QGuidedGRPO
+  project_name: QGuidedGRPO
+  list_state_feature:
+    - cur_phase
+    - traffic_movement_pressure_queue
+  dic_reward_info:
+    queue_length: -0.25
+
+policy:
+  llm_path: /home/y/yuchenbo/.cache/huggingface/hub/models--lightgpt--LightGPT-8B-Llama3/snapshots/caa86820ea7e1a2219604e4980954af535a08cfe
+  dtype: bfloat16
+  device_map: auto
+  lora:
+    enabled: false
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+critic:
+  list_state_feature:
+    - cur_phase
+    - traffic_movement_pressure_queue_efficient
+    - lane_enter_running_part
+    - adjacency_matrix
+  cnn_layers:
+    - [32, 32]
+  # Optional CoLight checkpoint loading
+  checkpoint_dir: checkpoints/run_save_pt/anon_4_4_hangzhou_real.json03_11_22_16_15
+  checkpoint_file: round_99_inter_0
+
+rollout:
+  k: 4
+  invalid_action_reward: 0.0
+  max_prompt_length: 2048
+  max_new_tokens: 256
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 50
+  do_sample: true
+
+grpo:
+  output_dir: checkpoints/rl_grpo/grpo_runs
+  learning_rate: 1.0e-6
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  logging_steps: 1
+  save_steps: 1000
+  save_total_limit: 2
+  save_strategy: steps
+  report_to: none
+  max_completion_length: 256
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  scale_rewards: group
+  beta: 0.02
+  num_iterations: 1
+
+train:
+  episodes: 1
+  save_every_episode: 1
