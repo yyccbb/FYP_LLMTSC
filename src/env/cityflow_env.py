@@ -353,6 +353,47 @@ class CityFlowEnv:
     def get_current_time(self):
         return self.eng.get_current_time()
 
+    @staticmethod
+    def _intersection_snapshot_fields():
+        return [
+            "current_phase_index",
+            "previous_phase_index",
+            "next_phase_to_set_index",
+            "current_phase_duration",
+            "all_red_flag",
+            "all_yellow_flag",
+            "flicker",
+            "dic_lane_vehicle_previous_step",
+            "dic_lane_vehicle_previous_step_in",
+            "dic_lane_waiting_vehicle_count_previous_step",
+            "dic_vehicle_speed_previous_step",
+            "dic_vehicle_distance_previous_step",
+            "dic_lane_vehicle_current_step_in",
+            "dic_lane_vehicle_current_step",
+            "dic_lane_waiting_vehicle_count_current_step",
+            "dic_vehicle_speed_current_step",
+            "dic_vehicle_distance_current_step",
+            "list_lane_vehicle_previous_step_in",
+            "list_lane_vehicle_current_step_in",
+            "dic_vehicle_arrive_leave_time",
+            "dic_feature",
+            "dic_feature_previous_step",
+        ]
+
+    def _capture_intersection_snapshot(self, inter):
+        snapshot = {}
+        for field_name in self._intersection_snapshot_fields():
+            snapshot[field_name] = copy.deepcopy(getattr(inter, field_name))
+        return snapshot
+
+    def _load_intersection_snapshot(self, inter, inter_snapshot):
+        for field_name in self._intersection_snapshot_fields():
+            if field_name not in inter_snapshot:
+                raise KeyError(
+                    f"Intersection snapshot for {inter.inter_name} is missing '{field_name}'."
+                )
+            setattr(inter, field_name, copy.deepcopy(inter_snapshot[field_name]))
+
     def capture_snapshot(self):
         """
         Capture an in-memory snapshot of both CityFlow engine state and
@@ -371,7 +412,7 @@ class CityFlowEnv:
             "intersection_states": {},
         }
         for inter in self.list_intersection:
-            snapshot["intersection_states"][inter.inter_name] = inter.capture_snapshot()
+            snapshot["intersection_states"][inter.inter_name] = self._capture_intersection_snapshot(inter)
 
         return snapshot
 
@@ -407,7 +448,7 @@ class CityFlowEnv:
             )
 
         for inter in self.list_intersection:
-            inter.load_snapshot(intersection_states[inter.inter_name])
+            self._load_intersection_snapshot(inter, intersection_states[inter.inter_name])
 
     def log(self, cur_time, before_action_feature, action):
 
