@@ -44,7 +44,7 @@ rollout:
   k: 4
   invalid_action_reward: 0.0
   max_prompt_length: 2048
-  max_new_tokens: 256
+  max_new_tokens: 1024
   temperature: 1.0
   top_p: 1.0
   top_k: 50
@@ -62,7 +62,7 @@ grpo:
   save_total_limit: 2
   save_strategy: steps
   report_to: none
-  max_completion_length: 256
+  max_completion_length: 1024
   temperature: 1.0
   top_p: 1.0
   top_k: 0
