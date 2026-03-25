@@ -20,6 +20,7 @@ from src.utils.utils import run_debugpy_server
 from src.utils.config import DIC_CITY_ALIASES, DIC_CITY_SPECS, DIC_PATHS, DIC_TRAFFIC_ENV_CONF
 from src.utils.errors import InvalidCityError
 
+WANDB_PROJECT = "FYP_LLMTSC_Benchmark"
 
 METRIC_FIELDS = [
     "city",
@@ -43,7 +44,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="./ft_models/merged/llama_ift_13b_jinan_1",
+        default="checkpoints/rl_grpo/qguided_grpo_hangzhou_anon_4_4_hangzhou_real_20260325_033613/checkpoint-1920",
         help=(
             "LLM model path or LoRA adapter path. Kept as `checkpoint_path` to mirror "
             "benchmark_dqn.py flag naming."
@@ -475,6 +476,53 @@ def append_metric(csv_path, row):
         writer.writerow(row)
 
 
+def init_wandb_logging(run_dir, model_spec, in_args):
+    try:
+        import wandb
+    except ImportError as exc:
+        raise ImportError(
+            "wandb is required for benchmark logging. Please install and configure wandb."
+        ) from exc
+
+    run_name = os.path.basename(run_dir)
+    run_config = {
+        "checkpoint_path_input": model_spec["checkpoint_path_input"],
+        "resolved_model_path": model_spec["resolved_model_path"],
+        "is_lora_adapter": model_spec["is_lora_adapter"],
+        "base_model_name_or_path": model_spec["base_model_name_or_path"],
+        "city_flag": in_args.city,
+        "action_interval": in_args.action_interval,
+        "quiet": in_args.quiet,
+        "run_dir": run_dir,
+    }
+
+    try:
+        run = wandb.init(
+            project=WANDB_PROJECT,
+            name=run_name,
+            config=run_config,
+            settings=wandb.Settings(mode="online"),
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to initialize wandb in online mode. Ensure wandb is configured "
+            "for this environment."
+        ) from exc
+
+    table = wandb.Table(columns=METRIC_FIELDS)
+    return wandb, run, table
+
+
+def log_wandb_row(wandb_run, wandb_table, row, completed):
+    wandb_table.add_data(*(row[field] for field in METRIC_FIELDS))
+    wandb_run.log(
+        {
+            "per_file_results_table": wandb_table,
+            "benchmark/completed_jobs": completed,
+        }
+    )
+
+
 def main(in_args):
     if in_args.debug:
         run_debugpy_server()
@@ -489,42 +537,47 @@ def main(in_args):
         model_spec=model_spec,
         city_flag=in_args.city,
     )
+    wandb, wandb_run, wandb_table = init_wandb_logging(run_dir, model_spec, in_args)
 
-    llm, sampling_params = init_vllm_runtime(model_spec["resolved_model_path"])
+    try:
+        llm, sampling_params = init_vllm_runtime(model_spec["resolved_model_path"])
 
-    base_env_conf = deepcopy(DIC_TRAFFIC_ENV_CONF)
-    total_jobs = sum(len(DIC_CITY_SPECS[city_name].list_traffic_files) for city_name in selected_cities)
-    completed = 0
+        base_env_conf = deepcopy(DIC_TRAFFIC_ENV_CONF)
+        total_jobs = sum(len(DIC_CITY_SPECS[city_name].list_traffic_files) for city_name in selected_cities)
+        completed = 0
 
-    for city_name in selected_cities:
-        city_specs = DIC_CITY_SPECS[city_name]
-        run_counts = city_specs.count
-        traffic_files = city_specs.list_traffic_files
+        for city_name in selected_cities:
+            city_specs = DIC_CITY_SPECS[city_name]
+            run_counts = city_specs.count
+            traffic_files = city_specs.list_traffic_files
 
-        for traffic_file in traffic_files:
-            completed += 1
-            row = run_single_benchmark(
-                llm=llm,
-                sampling_params=sampling_params,
-                base_env_conf=base_env_conf,
-                city_name=city_name,
-                road_net=city_specs.road_net,
-                traffic_file=traffic_file,
-                output_dir=run_dir,
-                action_interval=in_args.action_interval,
-                run_counts=run_counts,
-                checkpoint_path_value=in_args.checkpoint_path,
-                quiet=in_args.quiet,
-            )
-            append_metric(csv_path, row)
+            for traffic_file in traffic_files:
+                completed += 1
+                row = run_single_benchmark(
+                    llm=llm,
+                    sampling_params=sampling_params,
+                    base_env_conf=base_env_conf,
+                    city_name=city_name,
+                    road_net=city_specs.road_net,
+                    traffic_file=traffic_file,
+                    output_dir=run_dir,
+                    action_interval=in_args.action_interval,
+                    run_counts=run_counts,
+                    checkpoint_path_value=in_args.checkpoint_path,
+                    quiet=in_args.quiet,
+                )
+                append_metric(csv_path, row)
+                log_wandb_row(wandb_run, wandb_table, row, completed)
 
-            print(
-                f"[{completed}/{total_jobs}] {row['city']} | {row['traffic_file']} "
-                f"| ATT={row['ATT']:.4f} AQL={row['AQL']:.4f} AWT={row['AWT']:.4f}"
-            )
+                print(
+                    f"[{completed}/{total_jobs}] {row['city']} | {row['traffic_file']} "
+                    f"| ATT={row['ATT']:.4f} AQL={row['AQL']:.4f} AWT={row['AWT']:.4f}"
+                )
 
-    print(f"Saved benchmark logs to: {run_dir}")
-    print(f"Per-file metrics: {os.path.join(run_dir, 'metrics.csv')}")
+        print(f"Saved benchmark logs to: {run_dir}")
+        print(f"Per-file metrics: {os.path.join(run_dir, 'metrics.csv')}")
+    finally:
+        wandb.finish()
 
 
 if __name__ == "__main__":
