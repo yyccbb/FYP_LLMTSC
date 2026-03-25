@@ -1,8 +1,6 @@
 from copy import deepcopy
 from typing import Dict, List
 
-from src.utils.my_utils import get_state_detail
-
 from .template import build_prompt
 
 _LOCATION_DICT = {"N": "North", "S": "South", "E": "East", "W": "West"}
@@ -38,7 +36,7 @@ def format_state_to_text(state: Dict[str, Dict[str, List[float]]]) -> str:
                 f"Signal: {phase}",
                 f"Relieves: {_PHASE_EXPLANATION[phase]}",
                 (
-                    "- Queue: "
+                    "- Early queued: "
                     f"{queue_1} ({_LOCATION_DICT[lane_1[0]]}), "
                     f"{queue_2} ({_LOCATION_DICT[lane_2[0]]}), "
                     f"{queue_1 + queue_2} (Total)"
@@ -69,6 +67,8 @@ def format_state_to_text(state: Dict[str, Dict[str, List[float]]]) -> str:
 
 def get_intersection_state(env, intersection_index: int):
     """Extract the prompt state for one intersection from CityFlowEnv."""
+    from src.utils.my_utils import get_state_detail
+
     inter_name = env.list_intersection[intersection_index].inter_name
     intersection = env.intersection_dict[inter_name]
     roads = deepcopy(intersection["roads"])
