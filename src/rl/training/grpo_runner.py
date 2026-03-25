@@ -81,6 +81,8 @@ class GRPOTrainingRunner:
         }
         if cfg.get("run_name") is not None:
             grpo_kwargs["run_name"] = cfg.get("run_name")
+        if cfg.get("ddp_find_unused_parameters") is not None:
+            grpo_kwargs["ddp_find_unused_parameters"] = bool(cfg.get("ddp_find_unused_parameters"))
 
         return GRPOConfig(**grpo_kwargs)
 

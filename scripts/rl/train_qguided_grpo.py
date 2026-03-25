@@ -63,7 +63,8 @@ def main():
 
     pipeline = QGuidedGRPOPipeline(config)
     logs = pipeline.run()
-    print(json.dumps(logs, indent=2))
+    if pipeline.is_main_process:
+        print(json.dumps(logs, indent=2))
 
 
 if __name__ == "__main__":

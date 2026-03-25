@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 import yaml
 
 from src.rl.rollout.collector import QGuidedRolloutCollector, RolloutResult
+from src.rl.training.distributed import DistributedRuntime
 from src.rl.training.grpo_runner import GRPOTrainingRunner
 from src.utils.config import DIC_BASE_AGENT_CONF, DIC_CITY_ALIASES, DIC_CITY_SPECS, DIC_TRAFFIC_ENV_CONF
 
@@ -54,11 +55,14 @@ class QGuidedGRPOPipeline:
     ) -> None:
         self.config = copy.deepcopy(config)
         self._finalize_config_defaults()
+        self.distributed = DistributedRuntime.from_env()
+        self.is_main_process = self.distributed.is_main_process
         self._build_city_and_env_conf()
 
         self.dic_path = self._prepare_paths()
         self.wandb_enabled = bool(self.config["logging"]["wandb"]["enabled"])
         self._copy_cityflow_files()
+        self.distributed.wait_for_everyone()
 
         self.env = env
         self.tokenizer = tokenizer
@@ -66,13 +70,16 @@ class QGuidedGRPOPipeline:
         self.q_rewarder = q_rewarder
 
         if collector is None:
-            if self.env is None:
-                self.env = self._init_env()
             if self.policy_model is None or self.tokenizer is None:
                 self.policy_model, self.tokenizer = self._init_policy_model()
-            if self.q_rewarder is None:
-                self.q_rewarder = self._init_q_rewarder()
-            self.collector = self._init_collector()
+            if self._should_build_rollout_components():
+                if self.env is None:
+                    self.env = self._init_env()
+                if self.q_rewarder is None:
+                    self.q_rewarder = self._init_q_rewarder()
+                self.collector = self._init_collector()
+            else:
+                self.collector = None
         else:
             self.collector = collector
 
@@ -80,6 +87,13 @@ class QGuidedGRPOPipeline:
             self.grpo_runner = self._init_grpo_runner()
         else:
             self.grpo_runner = grpo_runner
+
+    def _log_once(self, message: str) -> None:
+        if self.is_main_process:
+            print(message)
+
+    def _should_build_rollout_components(self) -> bool:
+        return (not self.distributed.enabled) or self.is_main_process
 
     def _finalize_config_defaults(self) -> None:
         self.config.setdefault("paths", {})
@@ -118,7 +132,7 @@ class QGuidedGRPOPipeline:
 
         traffic_file = env_cfg.get("traffic_file")
         if not traffic_file:
-            print(f"Traffic file is not provided. Using first in list_traffic_files...")
+            self._log_once("Traffic file is not provided. Using first in list_traffic_files...")
             traffic_file = city_specs.list_traffic_files[0]
 
         if traffic_file not in city_specs.list_traffic_files:
@@ -183,8 +197,9 @@ class QGuidedGRPOPipeline:
         path_to_work_directory = os.path.join(output_root, run_name)
         path_to_checkpoints = os.path.join(checkpoint_root, run_name)
 
-        os.makedirs(path_to_work_directory, exist_ok=True)
-        os.makedirs(path_to_checkpoints, exist_ok=True)
+        if self.is_main_process:
+            os.makedirs(path_to_work_directory, exist_ok=True)
+            os.makedirs(path_to_checkpoints, exist_ok=True)
 
         return {
             "PATH_TO_WORK_DIRECTORY": path_to_work_directory,
@@ -207,6 +222,9 @@ class QGuidedGRPOPipeline:
         )
 
     def _copy_cityflow_files(self) -> None:
+        if not self.is_main_process:
+            return
+
         roadnet = self.dic_traffic_env_conf["ROADNET_FILE"]
         traffic = self.dic_traffic_env_conf["TRAFFIC_FILE"]
         src_data = self.dic_path["PATH_TO_DATA"]
@@ -248,10 +266,23 @@ class QGuidedGRPOPipeline:
         dtype_name = str(policy_cfg.get("dtype", "bfloat16")).lower()
         dtype = torch.bfloat16 if dtype_name == "bfloat16" else torch.float16
 
+        configured_device_map = policy_cfg.get("device_map", "auto")
+        from_pretrained_kwargs = {
+            "dtype": dtype,
+        }
+        if self.distributed.enabled:
+            if configured_device_map is not None:
+                self._log_once(
+                    f"Ignoring policy.device_map={configured_device_map!r} during distributed training "
+                    "and loading one model replica per process."
+                )
+            from_pretrained_kwargs["low_cpu_mem_usage"] = True
+        else:
+            from_pretrained_kwargs["device_map"] = configured_device_map
+
         model = AutoModelForCausalLM.from_pretrained(
             llm_path,
-            dtype=dtype,
-            device_map=policy_cfg.get("device_map", "auto"),
+            **from_pretrained_kwargs,
         )
 
         tokenizer = AutoTokenizer.from_pretrained(llm_path, padding_side="left")
@@ -276,6 +307,9 @@ class QGuidedGRPOPipeline:
                     task_type=lora_cfg.get("task_type", "CAUSAL_LM"),
                 ),
             )
+
+        if self.distributed.enabled and self.distributed.device is not None:
+            model = model.to(self.distributed.device)
 
         return model, tokenizer
 
@@ -326,6 +360,10 @@ class QGuidedGRPOPipeline:
         grpo_cfg["num_generations"] = int(self.config["rollout"]["k"])
         grpo_cfg.setdefault("max_completion_length", int(self.config["rollout"].get("max_new_tokens", 256)))
         grpo_cfg.setdefault("run_name", self.run_name)
+        if self.distributed.enabled:
+            grpo_cfg.setdefault("ddp_find_unused_parameters", False)
+            if not self.is_main_process and grpo_cfg.get("report_to", "none") != "none":
+                grpo_cfg["report_to"] = "none"
         grpo_cfg["output_dir"] = self._resolve_grpo_output_dir(grpo_cfg.get("output_dir"))
         return GRPOTrainingRunner(
             grpo_config=grpo_cfg,
@@ -340,13 +378,17 @@ class QGuidedGRPOPipeline:
         return os.path.join(normalized_base_dir, self.run_name)
 
     def _save_policy_checkpoint(self, episode_idx: int) -> str:
+        if not self.is_main_process:
+            return ""
+
         checkpoint_dir = os.path.join(
             self.dic_path["PATH_TO_TRAINED_CHECKPOINTS"],
             f"episode_{episode_idx}",
         )
         os.makedirs(checkpoint_dir, exist_ok=True)
-        if hasattr(self.policy_model, "save_pretrained"):
-            self.policy_model.save_pretrained(checkpoint_dir)
+        model_to_save = getattr(self.policy_model, "module", self.policy_model)
+        if hasattr(model_to_save, "save_pretrained"):
+            model_to_save.save_pretrained(checkpoint_dir)
         if self.tokenizer is not None and hasattr(self.tokenizer, "save_pretrained"):
             self.tokenizer.save_pretrained(checkpoint_dir)
         return checkpoint_dir
@@ -355,22 +397,28 @@ class QGuidedGRPOPipeline:
         episodes = int(self.config["train"]["episodes"])
         save_every = int(self.config["train"].get("save_every_episode", 1))
 
-        wandb_run = self._init_wandb_run() if self.wandb_enabled else None
+        wandb_run = self._init_wandb_run() if self.wandb_enabled and self.is_main_process else None
         run_logs: List[Dict[str, Any]] = []
         try:
             for episode_idx in range(episodes):
-                # rollout_result = self.collector.collect_episode(
-                #     run_counts=self.run_counts,
-                #     action_interval=self.action_interval,
-                # )
-                # trainer = self.grpo_runner.train_on_records(
-                #     model=self.policy_model,
-                #     tokenizer=self.tokenizer,
-                #     records=rollout_result.dataset_records,
-                # )
-                import pickle
-                with open('data.pkl', "rb") as f:
-                    dataset_records = pickle.load(f)
+                rollout_result = None
+                dataset_records = None
+                if self.is_main_process:
+                    if self.collector is None:
+                        raise RuntimeError("Rollout collector is not initialized on the main process.")
+                    rollout_result = self.collector.collect_episode(
+                        run_counts=self.run_counts,
+                        action_interval=self.action_interval,
+                    )
+                    dataset_records = rollout_result.dataset_records
+
+                # import pickle
+                # with open('data.pkl', "rb") as f:
+                #     dataset_records = pickle.load(f)
+
+                dataset_records = self.distributed.broadcast_object(dataset_records)
+                if dataset_records is None:
+                    raise RuntimeError("No rollout dataset records were collected for GRPO training.")
 
                 trainer = self.grpo_runner.train_on_records(
                     model=self.policy_model,
@@ -379,25 +427,32 @@ class QGuidedGRPOPipeline:
                 )
 
                 checkpoint_path = None
-                if save_every > 0 and (episode_idx + 1) % save_every == 0:
+                if self.is_main_process and save_every > 0 and (episode_idx + 1) % save_every == 0:
                     checkpoint_path = self._save_policy_checkpoint(episode_idx)
 
-                run_logs.append(
-                    {
-                        "episode": episode_idx,
-                        # "steps": rollout_result.num_steps,
-                        # "dataset_records": len(rollout_result.dataset_records),
-                        "checkpoint_path": checkpoint_path,
-                        "trainer_built": trainer is not None,
-                    }
-                )
+                self.distributed.wait_for_everyone()
+
+                if self.is_main_process:
+                    run_logs.append(
+                        {
+                            "episode": episode_idx,
+                            "steps": rollout_result.num_steps,
+                            "dataset_records": len(dataset_records),
+                            "checkpoint_path": checkpoint_path,
+                            "trainer_built": trainer is not None,
+                        }
+                    )
         finally:
+            self.distributed.wait_for_everyone()
             if wandb_run is not None:
                 wandb_run.finish()
 
         return run_logs
 
     def evaluate(self, episodes: int = 1) -> List[RolloutResult]:
+        if self.collector is None:
+            raise RuntimeError("Evaluation requires a rollout collector on the active process.")
+
         results: List[RolloutResult] = []
         for _ in range(int(episodes)):
             results.append(
