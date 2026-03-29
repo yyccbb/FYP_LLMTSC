@@ -14,7 +14,7 @@ DIC_CITY_SPECS = {
             "anon_3_4_jinan_real.json",
             "anon_3_4_jinan_real_2000.json",
             "anon_3_4_jinan_real_2500.json",
-            "anon_3_4_jinan_synthetic_24000_60min.json"
+            # "anon_3_4_jinan_synthetic_24000_60min.json"
         )
     ),
     "Hangzhou": CitySpecs(
@@ -23,7 +23,7 @@ DIC_CITY_SPECS = {
         (
             "anon_4_4_hangzhou_real.json", 
             "anon_4_4_hangzhou_real_5816.json",
-            "anon_4_4_hangzhou_synthetic_24000_60min.json"
+            # "anon_4_4_hangzhou_synthetic_24000_60min.json"
         )
     ),
     "NewYork": CitySpecs(

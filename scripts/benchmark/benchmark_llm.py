@@ -6,15 +6,13 @@ import os
 import re
 import shutil
 import sys
+import time
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from copy import deepcopy
 from datetime import datetime
+from tqdm import tqdm
 
 import numpy as np
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils.utils import run_debugpy_server
 from src.utils.config import DIC_CITY_ALIASES, DIC_CITY_SPECS, DIC_PATHS, DIC_TRAFFIC_ENV_CONF
@@ -44,7 +42,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="checkpoints/rl_grpo/qguided_grpo_hangzhou_anon_4_4_hangzhou_real_20260325_033613/checkpoint-1920",
+        default="checkpoints/rl_grpo/qguided_grpo_hangzhou_anon_4_4_hangzhou_real_20260326_050647/checkpoint-480",
         help=(
             "LLM model path or LoRA adapter path. Kept as `checkpoint_path` to mirror "
             "benchmark_dqn.py flag naming."
@@ -91,7 +89,8 @@ def parse_roadnet_shape(road_net):
 
 def resolve_cities(city_flag):
     if city_flag.lower() == "all":
-        return list(DIC_CITY_SPECS.keys())
+        # return list(DIC_CITY_SPECS.keys())
+        return ["Jinan", "Hangzhou"]
     city = DIC_CITY_ALIASES.get(city_flag.lower())
     if city is None:
         raise InvalidCityError(city_flag)
@@ -368,6 +367,8 @@ def run_single_benchmark(
         "PATH_TO_TRAINED_CHECKPOINTS": "",
         "PATH_TO_WORK_DIRECTORY": run_work_dir,
     }
+    traffic_file_start = time.perf_counter()
+    llm_block_total_elapsed = 0.0
 
     try:
         with suppress_output(quiet):
@@ -384,7 +385,13 @@ def run_single_benchmark(
             waiting_time_episode = []
 
             total_steps = int(run_counts / action_interval)
-            for _ in range(total_steps):
+            for _ in tqdm(
+                range(total_steps),
+                desc=f"{city_name} | {traffic_file}",
+                unit="step",
+                file=sys.__stdout__,
+                leave=False,
+            ):
                 if done:
                     break
 
@@ -395,6 +402,7 @@ def run_single_benchmark(
                     statistic_state, _, _ = get_state_detail(roads, env)
                     current_states.append(statistic_state)
 
+                llm_block_start = time.perf_counter()
                 prompts = [
                     build_llm_prompt(s, get_prompt_fn=getPrompt, state_to_text_fn=state2text)
                     for s in current_states
@@ -404,6 +412,7 @@ def run_single_benchmark(
                     sampling_params=sampling_params,
                     prompts=prompts,
                 )
+                llm_block_total_elapsed += time.perf_counter() - llm_block_start
 
                 action_list = []
                 for response in responses:
@@ -427,6 +436,14 @@ def run_single_benchmark(
         if quiet:
             shutil.rmtree(run_work_dir, ignore_errors=True)
             shutil.rmtree(run_log_dir, ignore_errors=True)
+
+    traffic_file_elapsed = time.perf_counter() - traffic_file_start
+    print(
+        f"[TIMING] {city_name} | {traffic_file} | "
+        f"{llm_block_total_elapsed:.4f}s / {traffic_file_elapsed:.4f}s total time",
+        file=sys.__stdout__,
+        flush=True,
+    )
 
     avg_queue_length = float(np.mean(queue_length_episode)) if queue_length_episode else 0.0
     avg_waiting_time = float(np.mean(waiting_time_episode)) if waiting_time_episode else 0.0
@@ -509,7 +526,8 @@ def init_wandb_logging(run_dir, model_spec, in_args):
             "for this environment."
         ) from exc
 
-    table = wandb.Table(columns=METRIC_FIELDS)
+    # We append rows over time and re-log each iteration; incremental mode logs only new rows.
+    table = wandb.Table(columns=METRIC_FIELDS, log_mode="INCREMENTAL")
     return wandb, run, table
 
 
@@ -547,6 +565,7 @@ def main(in_args):
         completed = 0
 
         for city_name in selected_cities:
+            city_start_time = time.perf_counter()
             city_specs = DIC_CITY_SPECS[city_name]
             run_counts = city_specs.count
             traffic_files = city_specs.list_traffic_files
@@ -573,6 +592,9 @@ def main(in_args):
                     f"[{completed}/{total_jobs}] {row['city']} | {row['traffic_file']} "
                     f"| ATT={row['ATT']:.4f} AQL={row['AQL']:.4f} AWT={row['AWT']:.4f}"
                 )
+
+            city_elapsed = time.perf_counter() - city_start_time
+            print(f"[TIMING] {city_name} total runtime: {city_elapsed:.2f}s")
 
         print(f"Saved benchmark logs to: {run_dir}")
         print(f"Per-file metrics: {os.path.join(run_dir, 'metrics.csv')}")
