@@ -394,6 +394,8 @@ class QGuidedGRPOPipeline:
         return checkpoint_dir
 
     def run(self) -> List[Dict[str, Any]]:
+        import pickle
+
         episodes = int(self.config["train"]["episodes"])
         save_every = int(self.config["train"].get("save_every_episode", 1))
 
@@ -403,6 +405,14 @@ class QGuidedGRPOPipeline:
             for episode_idx in range(episodes):
                 rollout_result = None
                 dataset_records = None
+                sync_file_path = os.path.join(
+                    self.dic_path["PATH_TO_WORK_DIRECTORY"],
+                    f"_episode_{episode_idx}_dataset_records.pkl",
+                )
+                sync_tmp_path = f"{sync_file_path}.tmp"
+
+                # Keep the side processes active when the main process is collecting
+                # rollouts. This way the job won't be killed by the process hang watchdog.
                 if self.is_main_process:
                     if self.collector is None:
                         raise RuntimeError("Rollout collector is not initialized on the main process.")
@@ -411,19 +421,37 @@ class QGuidedGRPOPipeline:
                         action_interval=self.action_interval,
                     )
                     dataset_records = rollout_result.dataset_records
+                    payload = {
+                        "episode_idx": episode_idx,
+                        "dataset_records": dataset_records,
+                    }
+                    with open(sync_tmp_path, "wb") as sync_file:
+                        pickle.dump(payload, sync_file, protocol=pickle.HIGHEST_PROTOCOL)
+                    os.replace(sync_tmp_path, sync_file_path)
+                else:
+                    while True:
+                        if not os.path.exists(sync_file_path):
+                            time.sleep(0.1)
+                            continue
+                        try:
+                            with open(sync_file_path, "rb") as sync_file:
+                                payload = pickle.load(sync_file)
+                        except (EOFError, pickle.UnpicklingError, FileNotFoundError):
+                            time.sleep(0.1)
+                            continue
 
-                # import pickle
-                # with open('data.pkl', "rb") as f:
-                #     dataset_records = pickle.load(f)
+                        if isinstance(payload, dict) and payload.get("episode_idx") == episode_idx:
+                            dataset_records = payload.get("dataset_records")
+                            break
+                        time.sleep(0.1)
 
-                dataset_records = self.distributed.broadcast_object(dataset_records)
                 if dataset_records is None:
                     raise RuntimeError("No rollout dataset records were collected for GRPO training.")
 
                 trainer = self.grpo_runner.train_on_records(
                     model=self.policy_model,
                     tokenizer=self.tokenizer,
-                    records=dataset_records
+                    records=dataset_records,
                 )
 
                 checkpoint_path = None
@@ -433,6 +461,9 @@ class QGuidedGRPOPipeline:
                 self.distributed.wait_for_everyone()
 
                 if self.is_main_process:
+                    for stale_path in (sync_file_path, sync_tmp_path):
+                        if os.path.exists(stale_path):
+                            os.remove(stale_path)
                     run_logs.append(
                         {
                             "episode": episode_idx,
