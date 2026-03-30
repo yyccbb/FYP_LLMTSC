@@ -5,6 +5,8 @@
 .DS_Store
 __pycache__/
 
+.codex_tmp/
+
 checkpoints/
 logs/
 benchmark_logs/
