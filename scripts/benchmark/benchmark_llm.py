@@ -14,6 +14,8 @@ from tqdm import tqdm
 
 import numpy as np
 
+from src.rl.prompting.parser import ACTION_TO_ID, parse_signal
+from src.rl.prompting.state_formatter import build_prompts_from_env
 from src.utils.utils import run_debugpy_server
 from src.utils.config import DIC_CITY_ALIASES, DIC_CITY_SPECS, DIC_PATHS, DIC_TRAFFIC_ENV_CONF
 from src.utils.errors import InvalidCityError
@@ -32,8 +34,7 @@ METRIC_FIELDS = [
     "checkpoint_path",
 ]
 
-SIGNAL_PATTERN = re.compile(r"<signal>(.*?)</signal>", re.IGNORECASE | re.DOTALL)
-DEFAULT_SIGNAL = "ETWT"
+DEFAULT_ACTION_ID = ACTION_TO_ID["ETWT"]
 DEFAULT_VLLM_BATCH_SIZE = 16
 DEFAULT_MAX_NEW_TOKENS = 1024
 
@@ -311,16 +312,6 @@ def compute_metrics(env, run_counts):
     return avg_travel_time
 
 
-def build_llm_prompt(statistic_state, get_prompt_fn, state_to_text_fn):
-    prompt_parts = get_prompt_fn(state_to_text_fn(statistic_state))
-    return (
-        prompt_parts[0]["content"]
-        + "\n\n### Instruction:\n"
-        + prompt_parts[1]["content"]
-        + "\n\n### Response:\n"
-    )
-
-
 def generate_batched_responses(llm, sampling_params, prompts, batch_size=DEFAULT_VLLM_BATCH_SIZE):
     all_responses = []
     for start in range(0, len(prompts), batch_size):
@@ -328,14 +319,6 @@ def generate_batched_responses(llm, sampling_params, prompts, batch_size=DEFAULT
         responses_meta = llm.generate(prompts=batch_prompts, sampling_params=sampling_params)
         all_responses.extend(res.outputs[0].text for res in responses_meta)
     return all_responses
-
-
-def decode_signal(response_text, valid_signal_to_code):
-    matches = SIGNAL_PATTERN.findall(response_text)
-    signal_text = matches[-1].strip().upper() if matches else DEFAULT_SIGNAL
-    if signal_text not in valid_signal_to_code:
-        signal_text = DEFAULT_SIGNAL
-    return signal_text
 
 
 def run_single_benchmark(
@@ -352,7 +335,6 @@ def run_single_benchmark(
     quiet=True,
 ):
     from src.env.cityflow_env import CityFlowEnv
-    from src.utils.my_utils import action2code, four_phase_list, getPrompt, get_state_detail, state2text
 
     env_conf = build_run_config(
         base_env_conf, road_net, traffic_file, action_interval, run_counts
@@ -380,7 +362,7 @@ def run_single_benchmark(
             )
 
             done = False
-            state = env.reset()
+            _ = env.reset()
             queue_length_episode = []
             waiting_time_episode = []
 
@@ -395,18 +377,8 @@ def run_single_benchmark(
                 if done:
                     break
 
-                current_states = []
-                for i in range(len(state)):
-                    intersection = env.intersection_dict[env.list_intersection[i].inter_name]
-                    roads = deepcopy(intersection["roads"])
-                    statistic_state, _, _ = get_state_detail(roads, env)
-                    current_states.append(statistic_state)
-
                 llm_block_start = time.perf_counter()
-                prompts = [
-                    build_llm_prompt(s, get_prompt_fn=getPrompt, state_to_text_fn=state2text)
-                    for s in current_states
-                ]
+                prompts = build_prompts_from_env(env)
                 responses = generate_batched_responses(
                     llm=llm,
                     sampling_params=sampling_params,
@@ -416,11 +388,10 @@ def run_single_benchmark(
 
                 action_list = []
                 for response in responses:
-                    signal_text = decode_signal(response, valid_signal_to_code=four_phase_list)
-                    action_list.append(action2code(signal_text))
+                    action_id = parse_signal(response)
+                    action_list.append(action_id if action_id is not None else DEFAULT_ACTION_ID)
 
-                next_state, _, done, _ = env.step(action_list)
-                state = next_state
+                _, _, done, _ = env.step(action_list)
 
                 queue_length_inter = [
                     sum(inter.dic_feature["lane_num_waiting_vehicle_in"]) for inter in env.list_intersection
