@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 
 @dataclass
@@ -75,3 +75,21 @@ class DistributedRuntime:
         objects = [value if self.is_main_process else None]
         dist.broadcast_object_list(objects, src=0)
         return objects[0]
+
+    def all_gather_object(self, value: Any) -> List[Any]:
+        if not self.enabled:
+            return [value]
+
+        try:
+            import torch.distributed as dist
+        except ImportError as exc:
+            raise ImportError(
+                "torch.distributed is required for multi-GPU training."
+            ) from exc
+
+        if not dist.is_available() or not dist.is_initialized():
+            raise RuntimeError("Distributed process group is not initialized.")
+
+        objects: List[Any] = [None for _ in range(self.world_size)]
+        dist.all_gather_object(objects, value)
+        return objects

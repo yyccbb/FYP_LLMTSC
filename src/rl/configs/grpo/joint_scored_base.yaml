@@ -1,0 +1,71 @@
+paths:
+  output_root: logs/rl_grpo_joint_scored
+  checkpoint_root: checkpoints/rl_grpo_joint_scored
+  data_root: data
+
+env:
+  city: hangzhou
+  traffic_file: anon_4_4_hangzhou_real.json
+  run_counts: 3600
+  action_interval: 30
+  model_name: JointScoredGRPO
+  project_name: JointScoredGRPO
+  list_state_feature:
+    - cur_phase
+    - traffic_movement_pressure_queue
+  dic_reward_info:
+    queue_length: -0.25
+
+policy:
+  llm_path: /home/y/yuchenbo/.cache/huggingface/hub/models--lightgpt--LightGPT-8B-Llama3/snapshots/caa86820ea7e1a2219604e4980954af535a08cfe
+  dtype: bfloat16
+  device_map: auto
+  lora:
+    enabled: true
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+rollout:
+  k: 8
+  invalid_action_reward: 0.0
+  horizon: 6
+  discount_gamma: 0.99
+  reward_mode: total_pressure # enum: total_incoming_queue_length | total_pressure
+  continuation_policy: resample_each_step
+  reward_mix:
+    alpha: 0.6
+    beta: 0.3
+    global_weight: 0.1
+  max_prompt_length: 2048
+  max_new_tokens: 1024
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 50
+  do_sample: true
+
+grpo:
+  output_dir: checkpoints/joint_scored_grpo
+  learning_rate: 1.0e-6
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  steps_per_generation: null
+  num_train_epochs: 1
+  logging_steps: 1
+  save_steps: 1000
+  save_total_limit: 2
+  save_strategy: steps
+  report_to: none
+  max_completion_length: 1024
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  scale_rewards: group
+  beta: 0.02
+  num_iterations: 1
+
+train:
+  episodes: 1
+  save_every_episode: 1
