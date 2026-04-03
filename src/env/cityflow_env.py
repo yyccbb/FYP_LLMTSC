@@ -66,7 +66,7 @@ class CityFlowEnv:
             "roadnetFile": self.dic_traffic_env_conf["ROADNET_FILE"],
             "flowFile": self.dic_traffic_env_conf["TRAFFIC_FILE"],
             "rlTrafficLight": True,
-            "saveReplay": True,  # if "GPT" in self.dic_traffic_env_conf["MODEL_NAME"] or "llm" in self.dic_traffic_env_conf["MODEL_NAME"] else False,
+            "saveReplay": bool(self.dic_traffic_env_conf.get("SAVE_REPLAY", True)),
             "roadnetLogFile": f"./{self.dic_traffic_env_conf['ROADNET_FILE']}-{self.dic_traffic_env_conf['TRAFFIC_FILE']}-{self.dic_traffic_env_conf['MODEL']}-{len(self.dic_traffic_env_conf['PHASE'])}_Phases-roadnetLogFile.json",
             "replayLogFile": f"./{self.dic_traffic_env_conf['ROADNET_FILE']}-{self.dic_traffic_env_conf['TRAFFIC_FILE']}-{self.dic_traffic_env_conf['MODEL']}-{len(self.dic_traffic_env_conf['PHASE'])}_Phases-replayLogFile.txt"
         }

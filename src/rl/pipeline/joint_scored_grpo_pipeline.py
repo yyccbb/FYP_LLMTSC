@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import numpy as np
 import yaml
 
 from src.rl.rollout.collector import RolloutResult
@@ -179,6 +180,7 @@ class JointScoredGRPOPipeline:
                 ],
             ),
             "DIC_REWARD_INFO": env_cfg.get("dic_reward_info", {"queue_length": -0.25}),
+            "SAVE_REPLAY": bool(env_cfg.get("save_replay", False)),
         }
 
         self.dic_traffic_env_conf = copy.deepcopy(DIC_TRAFFIC_ENV_CONF)
@@ -190,22 +192,35 @@ class JointScoredGRPOPipeline:
     def _prepare_paths(self) -> Dict[str, str]:
         paths_cfg = self.config["paths"]
         run_name = paths_cfg.get("run_name")
-        if not run_name:
+        if self.distributed.enabled:
+            if self.is_main_process and not run_name:
+                timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+                traffic_key = self.dic_traffic_env_conf["TRAFFIC_FILE"].replace(".json", "")
+                run_name = f"joint_scored_grpo_{self.city_name.lower()}_{traffic_key}_{timestamp}"
+            run_name = self.distributed.broadcast_object(run_name)
+        elif not run_name:
             timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
             traffic_key = self.dic_traffic_env_conf["TRAFFIC_FILE"].replace(".json", "")
-            run_name = f"qguided_grpo_{self.city_name.lower()}_{traffic_key}_{timestamp}"
+            run_name = f"joint_scored_grpo_{self.city_name.lower()}_{traffic_key}_{timestamp}"
+        if not run_name:
+            raise RuntimeError("Failed to resolve a shared run_name for the current run.")
         self.run_name = run_name
 
         output_root = paths_cfg.get("output_root", "logs/rl_grpo_joint_scored")
         checkpoint_root = paths_cfg.get("checkpoint_root", "checkpoints/rl_grpo_joint_scored")
         data_root = paths_cfg.get("data_root", "data")
 
-        path_to_work_directory = os.path.join(output_root, run_name)
+        run_output_root = os.path.join(output_root, run_name)
+        if self.distributed.enabled:
+            path_to_work_directory = os.path.join(run_output_root, f"rank_{self.distributed.process_index}")
+        else:
+            path_to_work_directory = run_output_root
         path_to_checkpoints = os.path.join(checkpoint_root, run_name)
 
-        if self.is_main_process:
-            os.makedirs(path_to_work_directory, exist_ok=True)
-            os.makedirs(path_to_checkpoints, exist_ok=True)
+        # Per-rank CityFlow runtime directory.
+        os.makedirs(path_to_work_directory, exist_ok=True)
+        # Shared checkpoint directory (main process writes checkpoints).
+        os.makedirs(path_to_checkpoints, exist_ok=True)
 
         return {
             "PATH_TO_WORK_DIRECTORY": path_to_work_directory,
@@ -228,9 +243,6 @@ class JointScoredGRPOPipeline:
         )
 
     def _copy_cityflow_files(self) -> None:
-        if not self.is_main_process:
-            return
-
         roadnet = self.dic_traffic_env_conf["ROADNET_FILE"]
         traffic = self.dic_traffic_env_conf["TRAFFIC_FILE"]
         src_data = self.dic_path["PATH_TO_DATA"]
@@ -253,6 +265,12 @@ class JointScoredGRPOPipeline:
             dic_traffic_env_conf=self.dic_traffic_env_conf,
             dic_path=self.dic_path,
         )
+        # Keep per-rank environments synchronized for distributed rollout collection.
+        shared_seed = None
+        if self.is_main_process:
+            shared_seed = int(time.time()) % (2**31 - 1)
+        shared_seed = int(self.distributed.broadcast_object(shared_seed))
+        np.random.seed(shared_seed)
         env.reset()
         return env
 
