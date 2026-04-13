@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import pickle
 import shutil
 import time
 from pathlib import Path
@@ -41,6 +42,8 @@ def load_experiment_config(base_config: str | Path, override_configs: Optional[I
 
 class JointScoredGRPOPipeline:
     """Joint-scored GRPO training pipeline using snapshot-forked discounted rewards."""
+
+    ROLLOUT_ARTIFACT_FILENAME = "joint_rollout.pkl"
 
     def __init__(
         self,
@@ -192,7 +195,7 @@ class JointScoredGRPOPipeline:
     def _prepare_paths(self) -> Dict[str, str]:
         paths_cfg = self.config["paths"]
         run_name = paths_cfg.get("run_name")
-        if self.distributed.enabled:
+        if self.distributed.enabled and not run_name:
             if self.is_main_process and not run_name:
                 timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
                 traffic_key = self.dic_traffic_env_conf["TRAFFIC_FILE"].replace(".json", "")
@@ -217,12 +220,15 @@ class JointScoredGRPOPipeline:
             path_to_work_directory = run_output_root
         path_to_checkpoints = os.path.join(checkpoint_root, run_name)
 
+        # Shared run-level directory for cross-script artifacts.
+        os.makedirs(run_output_root, exist_ok=True)
         # Per-rank CityFlow runtime directory.
         os.makedirs(path_to_work_directory, exist_ok=True)
         # Shared checkpoint directory (main process writes checkpoints).
         os.makedirs(path_to_checkpoints, exist_ok=True)
 
         return {
+            "PATH_TO_RUN_DIRECTORY": run_output_root,
             "PATH_TO_WORK_DIRECTORY": path_to_work_directory,
             "PATH_TO_TRAINED_CHECKPOINTS": path_to_checkpoints,
             "PATH_TO_DATA": os.path.join(data_root, self.city_name),
@@ -241,6 +247,29 @@ class JointScoredGRPOPipeline:
             name=self.run_name,
             config=self.config,
         )
+
+    def _acquire_stage_wandb_run(self):
+        """Acquire a WandB run for direct stage calls, reusing an active run if present."""
+        if not (self.wandb_enabled and self.is_main_process):
+            return None, False
+
+        try:
+            import wandb
+        except ImportError as exc:
+            raise ImportError(
+                "wandb is required when logging.wandb.enabled is True."
+            ) from exc
+
+        active_run = getattr(wandb, "run", None)
+        if active_run is not None:
+            return active_run, False
+
+        return self._init_wandb_run(), True
+
+    @staticmethod
+    def _finalize_stage_wandb_run(wandb_run, created_by_stage: bool) -> None:
+        if created_by_stage and wandb_run is not None:
+            wandb_run.finish()
 
     def _copy_cityflow_files(self) -> None:
         roadnet = self.dic_traffic_env_conf["ROADNET_FILE"]
@@ -399,47 +428,141 @@ class JointScoredGRPOPipeline:
             self.tokenizer.save_pretrained(checkpoint_dir)
         return checkpoint_dir
 
-    def run(self) -> List[Dict[str, Any]]:
+    def _validate_single_episode(self) -> None:
         episodes = int(self.config["train"]["episodes"])
-        save_every = int(self.config["train"].get("save_every_episode", 1))
+        if episodes != 1:
+            raise ValueError(
+                "JointScoredGRPOPipeline requires train.episodes == 1 for collect/train split flow."
+            )
+
+    def _rollout_artifact_path(self) -> str:
+        return os.path.join(
+            self.dic_path["PATH_TO_RUN_DIRECTORY"],
+            self.ROLLOUT_ARTIFACT_FILENAME,
+        )
+
+    def collect_rollout_once(self) -> Dict[str, Any]:
+        self._validate_single_episode()
+        wandb_run, created_by_stage = self._acquire_stage_wandb_run()
+        try:
+            if self.collector is None:
+                raise RuntimeError("Rollout collector is not initialized.")
+
+            rollout_result = self.collector.collect_episode(
+                run_counts=self.run_counts,
+                action_interval=self.action_interval,
+            )
+            dataset_records = rollout_result.dataset_records
+            if dataset_records is None:
+                raise RuntimeError("No rollout dataset records were collected.")
+
+            artifact_path = self._rollout_artifact_path()
+            if self.is_main_process:
+                payload = {
+                    "version": 1,
+                    "run_name": self.run_name,
+                    "dataset_records": dataset_records,
+                    "selected_actions_by_step": rollout_result.selected_actions_by_step,
+                    "selected_rewards_by_step": rollout_result.selected_rewards_by_step,
+                    "num_steps": int(rollout_result.num_steps),
+                }
+                with open(artifact_path, "wb") as file:
+                    pickle.dump(payload, file, protocol=pickle.HIGHEST_PROTOCOL)
+
+            self.distributed.wait_for_everyone()
+
+            return {
+                "episode": 0,
+                "steps": int(rollout_result.num_steps),
+                "dataset_records": int(len(dataset_records)),
+                "checkpoint_path": None,
+                "trainer_built": False,
+                "rollout_artifact_path": artifact_path,
+            }
+        finally:
+            self._finalize_stage_wandb_run(wandb_run, created_by_stage)
+
+    def train_from_saved_rollout(self) -> Dict[str, Any]:
+        self._validate_single_episode()
+        wandb_run, created_by_stage = self._acquire_stage_wandb_run()
+        try:
+            artifact_path = self._rollout_artifact_path()
+
+            payload = None
+            if self.is_main_process:
+                if not os.path.exists(artifact_path):
+                    raise FileNotFoundError(f"Rollout artifact not found: {artifact_path}")
+                try:
+                    with open(artifact_path, "rb") as file:
+                        payload = pickle.load(file)
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to load rollout artifact: {artifact_path}") from exc
+
+                if not isinstance(payload, dict):
+                    raise RuntimeError("Rollout artifact payload must be a dict.")
+                required_fields = {
+                    "version",
+                    "run_name",
+                    "dataset_records",
+                    "selected_actions_by_step",
+                    "selected_rewards_by_step",
+                    "num_steps",
+                }
+                missing = [field for field in required_fields if field not in payload]
+                if missing:
+                    raise RuntimeError(
+                        f"Rollout artifact missing required fields: {', '.join(sorted(missing))}."
+                    )
+                if payload.get("run_name") != self.run_name:
+                    raise RuntimeError(
+                        f"Rollout artifact run_name={payload.get('run_name')!r} does not match "
+                        f"pipeline run_name={self.run_name!r}."
+                    )
+
+            dataset_records = self.distributed.broadcast_object(
+                payload["dataset_records"] if self.is_main_process else None
+            )
+            num_steps = self.distributed.broadcast_object(
+                int(payload["num_steps"]) if self.is_main_process else None
+            )
+
+            if dataset_records is None:
+                raise RuntimeError("No rollout dataset records loaded from artifact.")
+
+            trainer = self.grpo_runner.train_on_records(
+                model=self.policy_model,
+                tokenizer=self.tokenizer,
+                records=dataset_records,
+            )
+
+            checkpoint_path = None
+            save_every = int(self.config["train"].get("save_every_episode", 1))
+            if self.is_main_process and save_every > 0 and (1 % save_every == 0):
+                checkpoint_path = self._save_policy_checkpoint(0)
+
+            self.distributed.wait_for_everyone()
+
+            return {
+                "episode": 0,
+                "steps": int(num_steps) if num_steps is not None else 0,
+                "dataset_records": int(len(dataset_records)),
+                "checkpoint_path": checkpoint_path,
+                "trainer_built": trainer is not None,
+                "rollout_artifact_path": artifact_path,
+            }
+        finally:
+            self._finalize_stage_wandb_run(wandb_run, created_by_stage)
+
+    def run(self) -> List[Dict[str, Any]]:
+        self._validate_single_episode()
 
         wandb_run = self._init_wandb_run() if self.wandb_enabled and self.is_main_process else None
         run_logs: List[Dict[str, Any]] = []
         try:
-            for episode_idx in range(episodes):
-                if self.collector is None:
-                    raise RuntimeError("Rollout collector is not initialized.")
-
-                rollout_result = self.collector.collect_episode(
-                    run_counts=self.run_counts,
-                    action_interval=self.action_interval,
-                )
-                dataset_records = rollout_result.dataset_records
-                if dataset_records is None:
-                    raise RuntimeError("No rollout dataset records were collected for GRPO training.")
-
-                trainer = self.grpo_runner.train_on_records(
-                    model=self.policy_model,
-                    tokenizer=self.tokenizer,
-                    records=dataset_records,
-                )
-
-                checkpoint_path = None
-                if self.is_main_process and save_every > 0 and (episode_idx + 1) % save_every == 0:
-                    checkpoint_path = self._save_policy_checkpoint(episode_idx)
-
-                self.distributed.wait_for_everyone()
-
-                if self.is_main_process:
-                    run_logs.append(
-                        {
-                            "episode": episode_idx,
-                            "steps": rollout_result.num_steps,
-                            "dataset_records": len(dataset_records),
-                            "checkpoint_path": checkpoint_path,
-                            "trainer_built": trainer is not None,
-                        }
-                    )
+            _collect_log = self.collect_rollout_once()
+            train_log = self.train_from_saved_rollout()
+            if self.is_main_process:
+                run_logs.append(train_log)
         finally:
             self.distributed.wait_for_everyone()
             if wandb_run is not None:

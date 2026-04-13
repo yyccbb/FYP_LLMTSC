@@ -12,5 +12,5 @@ logs/
 benchmark_logs/
 wandb/
 
-batch_training.sh
+*.sh
 slurm_*.out

@@ -8,6 +8,7 @@ env:
   traffic_file: anon_4_4_hangzhou_real.json
   run_counts: 3600
   action_interval: 30
+  save_replay: false
   model_name: JointScoredGRPO
   project_name: JointScoredGRPO
   list_state_feature:
@@ -31,7 +32,7 @@ policy:
 rollout:
   k: 8
   invalid_action_reward: 0.0
-  horizon: 6
+  horizon: 3
   discount_gamma: 0.99
   reward_mode: total_pressure # enum: total_incoming_queue_length | total_pressure
   continuation_policy: resample_each_step

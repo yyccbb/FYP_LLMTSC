@@ -41,12 +41,29 @@ class DistributedRuntime:
             ) from exc
 
         state = PartialState()
+        device = getattr(state, "device", None)
+        try:
+            import torch
+        except ImportError:
+            torch = None
+
+        # NCCL object collectives rely on the process-local current CUDA device.
+        if (
+            torch is not None
+            and torch.cuda.is_available()
+            and device is not None
+            and getattr(device, "type", None) == "cuda"
+        ):
+            local_process_index = int(state.local_process_index)
+            torch.cuda.set_device(local_process_index)
+            device = torch.device("cuda", local_process_index)
+
         return cls(
             enabled=int(state.num_processes) > 1,
             world_size=int(state.num_processes),
             process_index=int(state.process_index),
             local_process_index=int(state.local_process_index),
-            device=getattr(state, "device", None),
+            device=device,
             _state=state,
         )
 
@@ -57,6 +74,27 @@ class DistributedRuntime:
     def wait_for_everyone(self) -> None:
         if self.enabled and self._state is not None:
             self._state.wait_for_everyone()
+
+    def _ensure_collective_device(self) -> Optional[Any]:
+        if not self.enabled or self.device is None:
+            return None
+        if getattr(self.device, "type", None) != "cuda":
+            return None
+
+        try:
+            import torch
+        except ImportError:
+            return None
+        if not torch.cuda.is_available():
+            return None
+
+        device_index = getattr(self.device, "index", None)
+        if device_index is None:
+            device_index = int(self.local_process_index)
+            self.device = torch.device("cuda", device_index)
+        if torch.cuda.current_device() != device_index:
+            torch.cuda.set_device(device_index)
+        return self.device
 
     def broadcast_object(self, value: Any) -> Any:
         if not self.enabled:
@@ -72,8 +110,15 @@ class DistributedRuntime:
         if not dist.is_available() or not dist.is_initialized():
             raise RuntimeError("Distributed process group is not initialized.")
 
+        collective_device = self._ensure_collective_device()
         objects = [value if self.is_main_process else None]
-        dist.broadcast_object_list(objects, src=0)
+        if collective_device is not None:
+            try:
+                dist.broadcast_object_list(objects, src=0, device=collective_device)
+            except TypeError:
+                dist.broadcast_object_list(objects, src=0)
+        else:
+            dist.broadcast_object_list(objects, src=0)
         return objects[0]
 
     def all_gather_object(self, value: Any) -> List[Any]:
@@ -90,6 +135,7 @@ class DistributedRuntime:
         if not dist.is_available() or not dist.is_initialized():
             raise RuntimeError("Distributed process group is not initialized.")
 
+        self._ensure_collective_device()
         objects: List[Any] = [None for _ in range(self.world_size)]
         dist.all_gather_object(objects, value)
         return objects
