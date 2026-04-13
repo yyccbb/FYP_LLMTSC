@@ -10,10 +10,52 @@ from src.utils.pipeline import Pipeline
 location_dict_short = {"North": "N", "South": "S", "East": "E", "West": "W"}
 location_direction_dict = ["NT", "NL", "ST", "SL", "ET", "EL", "WT", "WL"]
 
-def run_debugpy_server(port=5678):
-    debugpy.listen(("0.0.0.0", port))
-    print(f"Debugger listening on {os.uname()[1]}:{port}. Waiting for attach…")
-    debugpy.wait_for_client()
+def run_debugpy_server(port=None, wait_for_client=True):
+    def _env_int(name):
+        value = os.getenv(name)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
+    local_rank = _env_int("LOCAL_RANK")
+    if local_rank is None:
+        local_rank = _env_int("RANK") or 0
+    world_size = _env_int("WORLD_SIZE") or 1
+
+    if port is None:
+        base_port = _env_int("DEBUGPY_PORT")
+        if base_port is None:
+            launcher_port = _env_int("MAIN_PORT")
+            if launcher_port is None:
+                launcher_port = _env_int("MASTER_PORT")
+            if launcher_port is not None:
+                # Keep debugpy away from torch/accelerate's rendezvous port.
+                base_port = launcher_port + 100
+            else:
+                base_port = 5678
+    else:
+        try:
+            base_port = int(port)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid debugpy port: {port!r}") from exc
+
+    debug_port = base_port + local_rank if world_size > 1 else base_port
+
+    debugpy.listen(("0.0.0.0", debug_port))
+    print(f"[rank {local_rank}] Debugger listening on {os.uname()[1]}:{debug_port}.")
+
+    if world_size > 1 and local_rank != 0:
+        print(f"[rank {local_rank}] Skipping wait_for_client in multi-process mode.")
+        return debug_port
+
+    if wait_for_client:
+        print(f"[rank {local_rank}] Waiting for debugger attach...")
+        debugpy.wait_for_client()
+
+    return debug_port
 
 
 def merge(dic_tmp, dic_to_change):
